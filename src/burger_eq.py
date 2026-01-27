@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 from pyDOE import lhs
+import scipy.io
 
 def compute_pde_residual(model, x, t, nu):
     """
@@ -47,68 +48,51 @@ def boundary_condition_right(t):
     """Boundary condition at x = 1: u(1, t) = 0"""
     return torch.zeros_like(t)
 
-def generate_training_data(n_initial, n_boundary, n_collocation, x_range=(-1, 1), t_range=(0, 1), device='cpu'):
-    """
-    Generate training data for Burgers equation.
-    
+def generate_data(N_u, N_f, device='cpu'):
+    """Generate training data for Burgers equation using Latin Hypercube Sampling.
     Args:
-        n_initial: Number of initial condition points
-        n_boundary: Number of boundary points per boundary
-        n_collocation: Number of interior collocation points
-        x_range: Spatial domain range
-        t_range: Temporal domain range
+    N_u: Number of initial and boundary condition points
+    N_f: Number of collocation points
     """
-    import scipy.io
-    
-    x_min, x_max = x_range
-    t_min, t_max = t_range
-    
-    # Initial condition points (t=0)
-    x_init = torch.rand(n_initial, 1, device=device) * (x_max - x_min) + x_min
-    t_init = torch.zeros(n_initial, 1, device=device)
-    u_init = initial_condition(x_init)
-    
-    # Boundary condition points
-    # Left boundary (x = x_min)
-    t_bc_left = torch.rand(n_boundary, 1, device=device) * (t_max - t_min) + t_min
-    x_bc_left = torch.ones(n_boundary, 1, device=device) * x_min
-    u_bc_left = boundary_condition_left(t_bc_left)
-    
-    # Right boundary (x = x_max)
-    t_bc_right = torch.rand(n_boundary, 1, device=device) * (t_max - t_min) + t_min
-    x_bc_right = torch.ones(n_boundary, 1, device=device) * x_max
-    u_bc_right = boundary_condition_right(t_bc_right)
-    
-    # Interior collocation points for PDE using Latin Hypercube Sampling
-    lhs_samples = lhs(2, n_collocation)
-    x_col = torch.tensor(lhs_samples[:, 0:1], dtype=torch.float32, device=device) * (x_max - x_min) + x_min
-    t_col = torch.tensor(lhs_samples[:, 1:2], dtype=torch.float32, device=device) * (t_max - t_min) + t_min
+    data = scipy.io.loadmat('./data/burgers_shock.mat')
 
-    # Load exact solution for supervised learning at collocation points
-    data = scipy.io.loadmat('./burgers_shock.mat')
-    t_exact = data['t'].flatten()
-    x_exact = data['x'].flatten()
+    t = data['t'].flatten()[:,None]
+    x = data['x'].flatten()[:,None]
     Exact = np.real(data['usol']).T
+
+    X, T = np.meshgrid(x,t)
+
+    X_star = np.hstack((X.flatten()[:,None], T.flatten()[:,None]))
+    u_star = Exact.flatten()[:,None]              
+
+    # Doman bounds
+    lb = X_star.min(0)
+    ub = X_star.max(0)    
+        
+    xx1 = np.hstack((X[0:1,:].T, T[0:1,:].T))
+    uu1 = Exact[0:1,:].T
+    xx2 = np.hstack((X[:,0:1], T[:,0:1]))
+    uu2 = Exact[:,0:1]
+    xx3 = np.hstack((X[:,-1:], T[:,-1:]))
+    uu3 = Exact[:,-1:]
+
+    X_u_train = np.vstack([xx1, xx2, xx3])
+    u_train = np.vstack([uu1, uu2, uu3])
     
-    # Interpolate exact solution at collocation points
-    from scipy.interpolate import griddata
-    X_exact, T_exact = np.meshgrid(x_exact, t_exact)
-    points_exact = np.hstack([X_exact.flatten()[:, None], T_exact.flatten()[:, None]])
-    u_exact_flat = Exact.flatten()
+    # Sample N_u points from all IC/BC points
+    idx = np.random.choice(X_u_train.shape[0], N_u, replace=False)
+    X_u_train = X_u_train[idx, :]
+    u_train = u_train[idx,:]
+
+    # Generate collocation points using Latin Hypercube Sampling (without adding IC/BC points)
+    X_f_train = lb + (ub-lb)*lhs(2, N_f)
+
+    # Convert to tensors - explicitly on the specified device
+    x_u = torch.tensor(X_u_train[:,0:1], dtype=torch.float32, device=device, requires_grad=False)
+    t_u = torch.tensor(X_u_train[:,1:2], dtype=torch.float32, device=device, requires_grad=False)
+    u = torch.tensor(u_train, dtype=torch.float32, device=device, requires_grad=False)
     
-    points_col = np.hstack([x_col.cpu().numpy(), t_col.cpu().numpy()])
-    # Use linear interpolation (more stable than cubic) with nearest neighbor fallback
-    u_col = griddata(points_exact, u_exact_flat, points_col, method='linear', fill_value=np.nan)
-    
-    # Fill any remaining NaN values with nearest neighbor interpolation
-    nan_mask = np.isnan(u_col)
-    if np.any(nan_mask):
-        u_col_nearest = griddata(points_exact, u_exact_flat, points_col, method='nearest')
-        u_col[nan_mask] = u_col_nearest[nan_mask]
-    
-    u_col = torch.tensor(u_col, dtype=torch.float32, device=device).reshape(-1, 1)
-    
-    return (x_init, t_init, u_init, 
-            x_bc_left, t_bc_left, u_bc_left,
-            x_bc_right, t_bc_right, u_bc_right,
-            x_col, t_col, u_col)
+    x_col = torch.tensor(X_f_train[:,0:1], dtype=torch.float32, device=device, requires_grad=False)
+    t_col = torch.tensor(X_f_train[:,1:2], dtype=torch.float32, device=device, requires_grad=False)
+
+    return (x_u, t_u, u, x_col, t_col)

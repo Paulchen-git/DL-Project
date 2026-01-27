@@ -1,0 +1,28 @@
+activation: nn.Tanh
+device: cpu
+epochs: 1
+lambda_bc: 1
+lambda_ic: 1
+layers:
+- 2
+- 20
+- 20
+- 20
+- 20
+- 20
+- 20
+- 20
+- 20
+- 1
+n_collocation: 2000
+n_u: 60
+nu: 0.003183098861837907
+optimizer:
+  history_size: 50
+  line_search_fn: strong_wolfe
+  lr: 1.0
+  max_eval: 50000
+  max_iter: 50000
+  tolerance_change: 1.0e-09
+  tolerance_grad: 1.0e-07
+  type: LBFGS
