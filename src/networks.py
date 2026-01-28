@@ -1,12 +1,16 @@
 import torch
 import torch.nn as nn
 from .burger_eq import compute_pde_residual
-from .poisson_eq import compute_pde_residual as compute_pde_residual_poisson
 from tqdm import tqdm
+import numpy as np
+
+np.random.seed(1234)
+torch.manual_seed(1234)
 
 
 class PINNforward(nn.Module):
-    """Physics-Informed Neural Network for forward problem solving Burgers equation."""
+    """Physics-Informed Neural Network for forward problem solving Burgers equation.
+    The optimizer used in this implementation is L-BFGS, which requires a closure function."""
 
     def __init__(self, layers, activation):
         super(PINNforward, self).__init__()
@@ -33,7 +37,7 @@ class PINNforward(nn.Module):
         output = self.layers[-1](inputs)
         return output
     
-    def train_pinn(self, optimizer, data, nu, epochs, lambda_pde=1, lambda_icbc=1, log_interval=100):
+    def train_pinn(self, optimizer, data, nu, epochs, lambda_pde=1, lambda_icbc=1, log_interval=1, progress_callback=None):
         """
         Train the PINN model.
         
@@ -50,11 +54,7 @@ class PINNforward(nn.Module):
         
         loss_history = {'total': [], 'pde': [], 'ib': []}
         
-        # Check if optimizer is L-BFGS
-        is_lbfgs = isinstance(optimizer, torch.optim.LBFGS)
-        
-        # Dictionary to store current loss values for L-BFGS
-        current_losses = {'total': [], 'pde': [], 'ib': []}
+        closure_called = [0]  # Mutable counter to track closure calls
         
         def closure():
             """Closure function required by L-BFGS optimizer"""
@@ -74,56 +74,34 @@ class PINNforward(nn.Module):
             loss = lambda_pde * loss_pde + lambda_icbc * loss_ib
             
             # Store current losses for logging (detach to avoid keeping computation graph)
-            current_losses['total'].append(loss.item())
-            current_losses['pde'].append(loss_pde.item())
-            current_losses['ib'].append(loss_ib.item())
+            loss_history['total'].append(loss.item())
+            loss_history['pde'].append(loss_pde.item())
+            loss_history['ib'].append(loss_ib.item())
             
             loss.backward()
+            if progress_callback is not None:
+                progress_callback()
+
             return loss
         
         for epoch in tqdm(range(epochs), desc="Training PINN"):
-            if is_lbfgs:
-                # L-BFGS requires a closure function
-                optimizer.step(closure)
-                
-                # Use stored loss values from closure
-                loss = current_losses['total'][-1]
-                loss_pde = current_losses['pde'][-1]
-                loss_ib = current_losses['ib'][-1]
-            else:
-                # Standard optimizer (Adam, SGD, etc.)
-                optimizer.zero_grad()
-                
-                # PDE residual loss (interior points)
-                residual = compute_pde_residual(self, x_col, t_col, nu)
-                loss_pde = torch.mean(residual**2)
-                
-                # Initial condition loss
-                u_pred_ib = self.forward(x_u, t_u)
-                loss_ib = torch.mean((u_pred_ib - u)**2)
-                
-                # Total loss
-                loss = lambda_pde * loss_pde + lambda_icbc * loss_ib
-                loss.backward()
-                optimizer.step()
-                
-                # Convert to items for storage
-                loss = loss.item()
-                loss_pde = loss_pde.item()
-                loss_ib = loss_ib.item()
+            # L-BFGS requires a closure function
+            optimizer.step(closure)
             
-            loss_history['total'].append(loss)
-            loss_history['pde'].append(loss_pde)
-            loss_history['ib'].append(loss_ib)
+            # Use stored loss values from closure
+            loss = loss_history['total'][-1]
+            loss_pde = loss_history['pde'][-1]
+            loss_ib = loss_history['ib'][-1]
             
             if log_interval is not None:
                 if (epoch + 1) % log_interval == 0:
                     print(f"Epoch {epoch+1}/{epochs} \
+                        -- Iterations of closure: {closure_called[0]} \
                         -- Total Loss: {loss:.6f} \
                         -- PDE Loss: {loss_pde:.6f} \
                         -- IC Loss: {loss_ib:.6f}")
             
-        return loss_history, current_losses
+        return loss_history
     
     def save_model(self, path):
         """Save the model state dictionary to the specified path."""

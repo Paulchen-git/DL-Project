@@ -54,6 +54,8 @@ def generate_data(N_u, N_f, device='cpu'):
     N_u: Number of initial and boundary condition points
     N_f: Number of collocation points
     """
+    np.random.seed(1234)
+    torch.manual_seed(1234)
     data = scipy.io.loadmat('./data/burgers_shock.mat')
 
     t = data['t'].flatten()[:,None]
