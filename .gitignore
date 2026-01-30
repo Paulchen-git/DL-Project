@@ -1,6 +1,6 @@
 __pycache__/
 *.pdf
 *.pyc
-*.png
+
 .DS_Store
 .vscode/
