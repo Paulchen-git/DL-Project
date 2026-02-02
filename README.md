@@ -55,3 +55,7 @@ Lancez le notebook [demo.ipynb](demo.ipynb) pour explorer :
 ## Résultats
 
 Les expériences comparent l'impact de différents hyperparamètres sur l'erreur L2 relative, avec résultats sauvegardés dans les fichiers CSV.
+
+## Extension
+
+En plus des analyses d'architectures et de la taille des données, j'ai choisi de rajouter une autre analyse, celle de la loss, puisque c'est là que réside le changement apporter par les PINNs.
